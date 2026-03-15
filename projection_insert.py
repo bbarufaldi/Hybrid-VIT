@@ -41,6 +41,7 @@ from projection.get_ROIs import get_candidate_pos
 from projection.proj_mask import get_projection_lesion_mask
 from projection.set_mtf import apply_mtf_mask_projs
 from projection.add_masks import add_masks_to_projs, write_dicom_projs
+from projection.rec_projects import reconstruct_projs, write_dicom_recon
 
 
 # ===========================================================================
@@ -78,6 +79,10 @@ STRIDE = [200, 200]
 
 # Contrast levels to iterate over (signal amplitude scaling factor)
 CONTRAST_LEVELS = [0.1]
+
+# Optional Step: Reconstruct Projections using pyDBT
+RECONSTRUCT_PROJECTIONS = True
+REC_SIZE = [0.14, 0.14, 1]
 
 
 # ===========================================================================
@@ -195,6 +200,20 @@ if __name__ == "__main__":
                 proj_out_path = f"{PATH_SAVE_DIR}/{current_id}/{contrast}"
                 logger.info(f"Writing DICOM projections to: {proj_out_path}")
                 write_dicom_projs(dicom_files, projs, proj_out_path)
+
+                logger.info(f"Saving ROIs as CSV...")
+                df = pd.DataFrame({'X': x_pos, 'Y': y_pos, 'Z': z_pos})
+                csv_fileName = f'{proj_out_path}/ROIs.csv'
+                df.to_csv(csv_fileName, index=False)
+
+                # --- Step 8: Reconstruct DBT images using pyDBT -----------
+                if RECONSTRUCT_PROJECTIONS:
+                    logger.info(f"Reconstruct images...")
+                    recon = reconstruct_projs(proj_out_path, REC_SIZE)
+
+                    logger.info(f"Writing DICOM DBT Reconstructions...")
+                    recPath = f"{proj_out_path}-rec"
+                    write_dicom_recon(recon, recPath, REC_SIZE)
 
                 logger.info(
                     f"Done | exam: {current_id}  "
