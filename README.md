@@ -29,6 +29,8 @@ Hybrid-VIT/
 ├── projection_insert.py      # Main entry point — run this script
 ├── Dockerfile                # Reproducible GPU-enabled environment
 ├── requirements.txt          # Python package dependencies
+├── models/                   # Lesion model loading and augmentation
+│   └── lesion.py             # load_lesion, modify_lesion (Perlin noise blending)
 ├── projection/               # DBT forward-projection helpers
 │   ├── get_ROIs.py           # Candidate insertion-position search & ROI export
 │   ├── proj_mask.py          # 3-D → 2-D projection of lesion mask
@@ -41,6 +43,7 @@ Hybrid-VIT/
 │   ├── seg_paddle.py         # Compression paddle marks detection & removal
 │   └── seg_pectoral.py       # Pectoral muscle detection (MLO view)
 ├── parameters/               # Scanner geometry and acquisition settings
+│   └── mtf_function_hologic3d_fourier.npy  # Pre-fitted system MTF
 └── functions/                # General-purpose image-processing utilities
 ```
 
@@ -90,6 +93,8 @@ All parameters are defined at the top of `projection_insert.py` under the
 | `ROI_SIZE` | ROI crop size for export `[x, y, z]` in mm | same as `TARGET_SIZE` |
 | `STRIDE` | Spacing between candidate insertion centres `[col, row]` in pixels | `[200, 200]` |
 | `CONTRAST_LEVELS` | List of contrast scaling factors to iterate over | `[0.01]` |
+| `RECONSTRUCT_PROJECTIONS` | When `True`, run FBP reconstruction after generating modified projections and save a DICOM slice series | `True` |
+| `REC_SIZE` | Voxel size `[dx, dy, dz]` in mm used for the FBP reconstruction volume | `[0.14, 0.14, 1]` |
 
 ---
 
@@ -98,31 +103,53 @@ All parameters are defined at the top of `projection_insert.py` under the
 ```
 DICOM projections
        │
-       ▼
- Breast segmentation  ──► 3-D breast mask + thickness
+  Step 1 ▼
+ Breast segmentation  ──► 3-D breast mask + body thickness
        │
-       ▼
- Lesion model loading ──► resize / augment lesion volume
+  Step 2 ▼
+ Lesion model loading ──► resize + Perlin-noise augmentation
        │
-       ▼
- Candidate position search (stride-based, within mask)
+  Step 3 ▼
+ Candidate position search (stride-based, inside dense tissue)
        │
-       ▼
- Forward projection of lesion mask (all angles)
+  Step 4 ▼
+ Forward projection of lesion mask (all projection angles)
        │
-       ▼
+  Step 5 ▼
  MTF blurring of projection-domain mask
        │
-       ▼
- Signal compositing on original projections
+  Step 6–7 ▼
+ Signal compositing on original projections + DICOM export
+       │
+  Step 8 ▼ (always)
+ Save candidate positions → ROIs.csv
+       │
+  Step 9 ▼ (if RECONSTRUCT_PROJECTIONS = True)
+ FBP reconstruction of modified projections
        │
        ▼
- DICOM output → results/<model>/<accession>/<exam>/<contrast>/
+ results/<model>/<accession>/<exam>/<contrast>/          ← modified projections
+ results/<model>/<accession>/<exam>/<contrast>-rec/      ← reconstructed slices
 ```
 
 ---
 
 ## Module Reference
+
+### `models/` — Lesion Model Utilities
+
+#### `lesion.py`
+
+Loads pre-built 3-D lesion volumes from ZIP archives and augments them with a
+perlin-noise–based attenuation profile for realistic heterogeneous appearance.
+
+| Function | Description |
+|---|---|
+| `load_lesion(zip_file, target_size, vxl)` | Opens the ZIP archive, reads the encoded `(nz, ny, nx)` uint8 raw volume, converts the target size from mm to voxels, and zooms the volume with trilinear interpolation. Returns a `float32` array in `[0, 1]`. |
+| `perlin_noise_3d(shape, scale, seed)` | Generates a 3-D Perlin coherent noise volume of shape `(nx, ny, nz)`. Larger `scale` values produce smoother, lower-frequency patterns. Output is normalised to `[0, 1]`. |
+| `modify_lesion(lesion3d)` | Augments a lesion mask by blending 50 % of the Euclidean distance transform with 50 % of a Perlin noise field masked by the lesion: `contrast = 0.5 * dist_norm + 0.5 * perlin * lesion`. The result is normalised and transposed to `(ny, nx, nz)` for the pyDBT projector. To use the raw mask instead (cluster mode) call only `load_lesion` and skip this function. |
+
+---
 
 ### `projection/` — Forward-Projection Helpers
 
@@ -233,10 +260,17 @@ For each processed exam the script produces:
 
 | File | Description |
 |---|---|
-| `<exam>_lesion.tif` | Raw 3-D lesion volume (for visual inspection) |
-| `<exam>_projs_masks.tif` | Forward-projected lesion masks |
-| `<exam>_projs_mtf.tif` | MTF-blurred projection masks |
-| `results/<model>/…/*.dcm` | Modified DICOM projections with lesion inserted |
+| `results/<model>/…/<contrast>/*.dcm` | Modified DICOM projections with lesion signal inserted |
+| `results/<model>/…/<contrast>/ROIs.csv` | CSV of candidate insertion positions (columns: `X`, `Y`, `Z`) used for downstream ROI extraction |
+| `results/<model>/…/<contrast>-rec/*.dcm` | FBP-reconstructed DICOM slices of the modified projections *(only when `RECONSTRUCT_PROJECTIONS = True`)* |
+
+> **Debug outputs** (commented out by default in `projection_insert.py`):
+>
+> | File | Description |
+> |---|---|
+> | `<exam>_lesion.tif` | Raw 3-D augmented lesion volume |
+> | `<exam>_projs_masks.tif` | Forward-projected lesion mask stack |
+> | `<exam>_projs_mtf.tif` | MTF-blurred projection mask stack |
 
 A detailed execution log is written to `hybrid-vit.log`.
 

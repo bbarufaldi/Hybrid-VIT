@@ -62,7 +62,7 @@ PATH_SAVE_DIR = f"./results/{LESION_MODEL}"
 # Accessions listed in `exclude.csv` are skipped (e.g. failed segmentations).
 # Only exams whose accession number appears in `inc` are processed.
 PATH_EXCLUDE_CSV = "exclude.csv"
-INCLUDE_ACCESSIONS = ["3012874"]  # Replace with full list or load from CSV
+INCLUDE_ACCESSIONS = ["12345678"]  # Replace with full list or load from CSV if needed
 
 # --- Imaging / Insertion Parameters ----------------------------------------
 # Voxel resolution of the lesion model [x, y, z] in mm/voxel
@@ -133,12 +133,7 @@ if __name__ == "__main__":
                 # --- Filtering -----------------------------------------------
                 # Skip views that are not MLO/CC (e.g. ML, CV), excluded exams,
                 # or accessions not in the inclusion list.
-                if (
-                    exam_folder in excluded_exams
-                    or accession not in INCLUDE_ACCESSIONS
-                    or "_ML_" in exam_folder
-                    or "_CV_" in exam_folder
-                ):
+                if exam_folder in excluded_exams or accession not in INCLUDE_ACCESSIONS:
                     logger.warning(f"Skipping exam: {current_id}")
                     continue
 
